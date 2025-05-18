@@ -1,0 +1,19 @@
+[package]
+name = "s3-path"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78.0"
+authors = ["Lukas Potthast <privat@lukas-potthast.de>"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/lpotthast/s3-path"
+description = """
+Describe paths inside an S3 bucket like working with std's Path and PathBuf.
+"""
+categories = ["filesystem"]
+keywords = ["s3", "path", "s3-path"]
+
+[dependencies]
+
+[dev-dependencies]
+assertr = "0.3.1"
