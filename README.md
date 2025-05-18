@@ -1,13 +1,13 @@
 # s3-path
 
-Construct S3 keys (paths).
+Construct safe S3 keys (informally named paths in this library).
 
-This library only allows the following characters to be used in components:
+This library only allows the following characters to be used in path components:
 
 - `[a..z]`, `[A..Z]`, `[0..9]`, `-`, `_`, `.`
 
-The following components are explicitly forbidden to avoid any path traversal when an S3 key is used as a filesystem
-path:
+The following path components are explicitly forbidden to avoid any path traversal when the S3 key is used as a
+filesystem path:
 
 - `.`
 - `..`
