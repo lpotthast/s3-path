@@ -22,7 +22,7 @@ pub struct S3Path<'i, C: Into<S3PathComp<'i>>, I: S3PathIter<'i, C>> {
 }
 
 impl<'i, C: Into<S3PathComp<'i>>, I: S3PathIter<'i, C>> S3Path<'i, C, I> {
-    pub fn from(components: I) -> Result<Self, InvalidS3PathComponent> {
+    pub fn try_from(components: I) -> Result<Self, InvalidS3PathComponent> {
         for component in components.clone().into_iter() {
             validation::validate_component(&component.into())?;
         }
@@ -193,7 +193,7 @@ mod test {
 
             #[test]
             fn from_static_str_array() {
-                let path = S3Path::from(["foo", "bar"]).unwrap();
+                let path = S3Path::try_from(["foo", "bar"]).unwrap();
                 assert_that(path).has_display_value("foo/bar");
             }
 
@@ -201,34 +201,39 @@ mod test {
             fn from_borrowed_str_array() {
                 let components = ["foo".to_string(), "bar".to_string()];
                 let components_ref = [components[0].as_str(), components[1].as_str()];
-                let path = S3Path::from(components_ref).unwrap();
+                let path = S3Path::try_from(components_ref).unwrap();
                 assert_that(path).has_display_value("foo/bar");
             }
 
             #[test]
             fn from_string_array() {
-                let path = S3Path::from(["foo".to_string(), "bar".to_string()]).unwrap();
+                let path = S3Path::try_from(["foo".to_string(), "bar".to_string()]).unwrap();
                 assert_that(path).has_display_value("foo/bar");
             }
 
             #[test]
             fn reject_invalid_characters() {
-                assert_that(S3Path::from(["foo-bar"]))
+                assert_that(S3Path::try_from(["foo-bar"]))
                     .is_ok()
                     .has_display_value("foo-bar");
-                assert_that(S3Path::from(["foo_bar"]))
+                assert_that(S3Path::try_from(["foo_bar"]))
                     .is_ok()
                     .has_display_value("foo_bar");
-                assert_that(S3Path::from(["foo.bar"]))
+                assert_that(S3Path::try_from(["foo.bar"]))
                     .is_ok()
                     .has_display_value("foo.bar");
+                assert_that(S3Path::try_from([".test"]))
+                    .is_ok()
+                    .has_display_value(".test");
 
-                assert_that(S3Path::from(["foo$bar"])).is_err();
-                assert_that(S3Path::from(["foo&bar"])).is_err();
-                assert_that(S3Path::from(["foo#bar"])).is_err();
-                assert_that(S3Path::from(["foo/bar"])).is_err();
-                assert_that(S3Path::from(["foo|bar"])).is_err();
-                assert_that(S3Path::from(["foo\\bar"])).is_err();
+                assert_that(S3Path::try_from(["foo$bar"])).is_err();
+                assert_that(S3Path::try_from(["foo&bar"])).is_err();
+                assert_that(S3Path::try_from(["foo#bar"])).is_err();
+                assert_that(S3Path::try_from(["foo/bar"])).is_err();
+                assert_that(S3Path::try_from(["foo|bar"])).is_err();
+                assert_that(S3Path::try_from(["foo\\bar"])).is_err();
+                assert_that(S3Path::try_from(["."])).is_err();
+                assert_that(S3Path::try_from([".."])).is_err();
             }
         }
     }

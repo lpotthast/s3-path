@@ -19,5 +19,12 @@ pub(crate) fn validate_component(component: &str) -> Result<(), InvalidS3PathCom
         }
     }
 
+    if component == "." || component == ".." {
+        return Err(InvalidS3PathComponent {
+            component: component.to_string(),
+            reason: "Potentially path traversing components are forbidden.".to_string(),
+        });
+    }
+
     Ok(())
 }
