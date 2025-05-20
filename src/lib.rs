@@ -28,6 +28,21 @@ pub struct S3Path<'i>([Cow<'i, str>]);
 pub struct S3PathBuf {
     components: Vec<Cow<'static, str>>,
 }
+
+// Allow comparisons between S3Path and S3PathBuf.
+impl<'i> PartialEq<&S3Path<'i>> for S3PathBuf {
+    fn eq(&self, other: &&S3Path<'i>) -> bool {
+        self.as_path() == *other
+    }
+}
+
+// Allow comparisons between S3Path and S3PathBuf.
+impl<'i> PartialEq<S3PathBuf> for &S3Path<'i> {
+    fn eq(&self, other: &S3PathBuf) -> bool {
+        *self == other.as_path()
+    }
+}
+
 impl<'i> AsRef<S3Path<'i>> for S3Path<'i> {
     fn as_ref(&self) -> &S3Path<'i> {
         self
@@ -97,10 +112,21 @@ impl<'i> S3Path<'i> {
         Ok(unsafe { &*(components as *const [Cow<'i, str>] as *const S3Path<'i>) })
     }
 
+    /// Converts to an owned S3PathBuf.
     pub fn to_owned(&'i self) -> S3PathBuf {
         S3PathBuf {
             components: self.0.iter().map(|it| Cow::Owned(it.to_string())).collect(),
         }
+    }
+
+    /// Converts to an owned S3PathBuf and tries to append `component`.
+    pub fn join<C: Into<Cow<'static, str>>>(
+        &self,
+        component: C,
+    ) -> Result<S3PathBuf, InvalidS3PathComponent> {
+        let mut path = self.to_owned();
+        path.join(component)?;
+        Ok(path)
     }
 
     /// Returns true if this path has no components.
@@ -133,9 +159,11 @@ impl<'i> S3Path<'i> {
         if self.0.is_empty() {
             None
         } else {
-            // Safety: S3Path is repr(transparent) over [Cow<'i, str>]
             let parent_slice = &self.0[..self.0.len() - 1];
-            Some(unsafe { &*(parent_slice as *const [Cow<'i, str>] as *const S3Path<'i>) })
+            Some(
+                // Safety: S3Path is repr(transparent) over [Cow<'i, str>]
+                unsafe { &*(parent_slice as *const [Cow<'i, str>] as *const S3Path<'i>) },
+            )
         }
     }
 
@@ -247,6 +275,9 @@ impl assertr::assertions::HasLength for S3PathBuf {
 
 #[cfg(test)]
 mod test {
+    use crate::S3PathBuf;
+    use assertr::prelude::*;
+
     mod s3_path_buf {
         use crate::S3PathBuf;
         use assertr::prelude::*;
@@ -438,6 +469,20 @@ mod test {
             let path = S3Path::new(&[Cow::Borrowed("foo"), Cow::Borrowed("bar")]).unwrap();
             assert_that(path).has_display_value("foo/bar");
         }
+
+        #[test]
+        fn to_owned_converts_to_owned_path() {
+            let path = s3_path!("foo", "bar").unwrap();
+            let path_owned = path.to_owned();
+            assert_that(path_owned).has_display_value("foo/bar");
+        }
+
+        #[test]
+        fn join_converts_to_owned_path_and_appends_component() {
+            let path = s3_path!("foo", "bar").unwrap();
+            let path_owned = path.join("baz").unwrap();
+            assert_that(path_owned).has_display_value("foo/bar/baz");
+        }
     }
 
     mod validation {
@@ -496,5 +541,14 @@ mod test {
         fn takes_s3_path() {
             take_any_path(S3Path::new(&[]).unwrap());
         }
+    }
+
+    #[test]
+    fn comparison_between_types() {
+        let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
+        let path = path_buf.as_path();
+
+        assert_that(path == path_buf).is_true();
+        assert_that(path_buf == path).is_true();
     }
 }
