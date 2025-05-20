@@ -7,21 +7,22 @@ use std::fmt::Formatter;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 
-pub type S3PathComp<'i> = Cow<'i, str>;
+pub type BorrowedS3PathComp<'i> = Cow<'i, str>;
+pub type OwnedS3PathComp = Cow<'static, str>;
 
-pub trait S3PathIter<'i, C>: IntoIterator<Item = C> + Clone {}
+pub trait S3PathIter<C>: IntoIterator<Item = C> + Clone {}
 
-impl<'i, C: Into<S3PathComp<'i>>, II: IntoIterator<Item = C> + Clone> S3PathIter<'i, C> for II {}
+impl<'i, C: Into<BorrowedS3PathComp<'i>>, II: IntoIterator<Item = C> + Clone> S3PathIter<C> for II {}
 
 /// A borrowed S3 storage path.
 #[derive(Clone)]
-pub struct S3Path<'i, C: Into<S3PathComp<'i>>, I: S3PathIter<'i, C>> {
+pub struct S3Path<'i, C: Into<BorrowedS3PathComp<'i>>, I: S3PathIter<C>> {
     components: I,
     phantom_data: PhantomData<&'i ()>,
     phantom_data2: PhantomData<C>,
 }
 
-impl<'i, C: Into<S3PathComp<'i>>, I: S3PathIter<'i, C>> S3Path<'i, C, I> {
+impl<'i, C: Into<BorrowedS3PathComp<'i>>, I: S3PathIter<C>> S3Path<'i, C, I> {
     pub fn try_from(components: I) -> Result<Self, InvalidS3PathComponent> {
         for component in components.clone().into_iter() {
             validation::validate_component(&component.into())?;
@@ -52,14 +53,14 @@ impl<'i, C: Into<S3PathComp<'i>>, I: S3PathIter<'i, C>> S3Path<'i, C, I> {
     }
 }
 
-impl<'i, C: Into<S3PathComp<'i>>, I: S3PathIter<'i, C>> std::fmt::Display for S3Path<'i, C, I> {
+impl<'i, C: Into<BorrowedS3PathComp<'i>>, I: S3PathIter<C>> std::fmt::Display for S3Path<'i, C, I> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write_components(self.components.clone().into_iter().map(|it| it.into()), f)?;
         Ok(())
     }
 }
 
-impl<'i, C: Into<S3PathComp<'i>>, I: S3PathIter<'i, C>> std::fmt::Debug for S3Path<'i, C, I> {
+impl<'i, C: Into<BorrowedS3PathComp<'i>>, I: S3PathIter<C>> std::fmt::Debug for S3Path<'i, C, I> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write_components(self.components.clone().into_iter().map(|it| it.into()), f)?;
         Ok(())
@@ -69,12 +70,33 @@ impl<'i, C: Into<S3PathComp<'i>>, I: S3PathIter<'i, C>> std::fmt::Debug for S3Pa
 /// An owned S3 storage path.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct S3PathBuf {
-    components: Vec<Cow<'static, str>>,
+    components: Vec<OwnedS3PathComp>,
 }
 
 impl S3PathBuf {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn try_from<'i, C: Into<OwnedS3PathComp>, I: S3PathIter<C>>(
+        components: I,
+    ) -> Result<Self, InvalidS3PathComponent> {
+        let mut path = S3PathBuf::new();
+        for component in components.into_iter() {
+            path.join(component)?;
+        }
+        Ok(path)
+    }
+
+    pub fn try_from_str(string: impl AsRef<str>) -> Result<Self, InvalidS3PathComponent> {
+        let mut path = S3PathBuf::new();
+        for c in string.as_ref().split('/') {
+            // Skip empty components from consecutive slashes
+            if !c.is_empty() {
+                path.join(Cow::Owned(c.to_string()))?;
+            }
+        }
+        Ok(path)
     }
 
     pub fn join(
@@ -121,7 +143,7 @@ impl TryFrom<String> for S3PathBuf {
     type Error = InvalidS3PathComponent;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        S3PathBuf::try_from(value.as_str())
+        TryFrom::try_from(value.as_str())
     }
 }
 
@@ -174,13 +196,13 @@ mod test {
 
         #[test]
         fn construct_using_try_from_given_str() {
-            let path = S3PathBuf::try_from("foo/bar").unwrap();
+            let path = S3PathBuf::try_from_str("foo/bar").unwrap();
             assert_that(path).has_display_value("foo/bar");
         }
 
         #[test]
         fn construct_using_try_from_given_string() {
-            let path = S3PathBuf::try_from("foo/bar".to_string()).unwrap();
+            let path = S3PathBuf::try_from_str("foo/bar".to_string()).unwrap();
             assert_that(path).has_display_value("foo/bar");
         }
 
@@ -190,7 +212,7 @@ mod test {
             let result = path.join("invalid/path");
             assert_that(result.is_err()).is_true();
 
-            let result = S3PathBuf::try_from("foo/bar$baz");
+            let result = S3PathBuf::try_from_str("foo/bar$baz");
             assert_that(result.is_err()).is_true();
         }
     }
