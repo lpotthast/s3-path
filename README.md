@@ -20,6 +20,9 @@ fn owned() {
     path.join("foo").unwrap();
     path.join("bar").unwrap();
     assert_that(path).has_display_value("foo/bar");
+
+    let path = S3PathBuf::try_from(["foo", "bar"]).unwrap();
+    assert_that(path).has_display_value("foo/bar");
 }
 
 fn borrowed() {
