@@ -11,7 +11,7 @@ pub(crate) fn validate_component(component: &str) -> Result<(), InvalidS3PathCom
     }
 
     for c in component.chars() {
-        if !c.is_alphanumeric() && c != '-' && c != '_' && c != '.' {
+        if !c.is_ascii_alphanumeric() && c != '-' && c != '_' && c != '.' {
             return Err(InvalidS3PathComponent {
                 component: component.to_string(),
                 reason: format!("Character '{}' is not allowed", c),
