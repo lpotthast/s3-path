@@ -40,6 +40,16 @@ impl<'i, C: Into<S3PathComp<'i>>, I: S3PathIter<'i, C>> S3Path<'i, C, I> {
             phantom_data2: PhantomData,
         }
     }
+
+    pub fn to_owned(self) -> S3PathBuf {
+        S3PathBuf {
+            components: self
+                .components
+                .into_iter()
+                .map(|it| Cow::Owned(it.into().to_string()))
+                .collect(),
+        }
+    }
 }
 
 impl<'i, C: Into<S3PathComp<'i>>, I: S3PathIter<'i, C>> std::fmt::Display for S3Path<'i, C, I> {
