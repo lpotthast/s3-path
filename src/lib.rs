@@ -103,11 +103,6 @@ impl<'i> S3Path<'i> {
         }
     }
 
-    /// Returns an iterator over the components of this path.
-    pub fn components(&'i self) -> impl Iterator<Item = &'i str> {
-        self.0.iter().map(move |it| it.as_ref())
-    }
-
     /// Returns true if this path has no components.
     pub fn is_empty(&'i self) -> bool {
         self.0.is_empty()
@@ -116,6 +111,11 @@ impl<'i> S3Path<'i> {
     /// Returns the number of components in this path.
     pub fn len(&'i self) -> usize {
         self.0.len()
+    }
+
+    /// Returns an iterator over the components of this path.
+    pub fn components(&'i self) -> impl Iterator<Item = &'i str> {
+        self.0.iter().map(move |it| it.as_ref())
     }
 
     /// Returns the component at the given index, or None if the index is out of bounds.
@@ -209,56 +209,6 @@ impl S3PathBuf {
         self.deref()
     }
 
-    /// Convert this S3 path to a `std::path::PathBuf`, allowing you to use this S3 path as a
-    /// system file path.
-    ///
-    /// Our strong guarantee that path components only consist of ascii alphanumeric characters,
-    /// '-', '_' and '.' and that no path traversal components ('.' and '..') are allowed, makes
-    /// this a safe operation.
-    pub fn to_std_path_buf(&self) -> PathBuf {
-        let mut path = PathBuf::new();
-        for c in &self.components {
-            path = path.join(c.as_ref());
-        }
-        path
-    }
-
-    /// Returns an iterator over the components of this path.
-    pub fn components(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().map(move |it| it.as_ref())
-    }
-
-    /// Returns true if this path has no components.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Returns the number of components in this path.
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Returns the component at the given index, or None if the index is out of bounds.
-    pub fn get(&self, index: usize) -> Option<&str> {
-        self.0.get(index).map(|it| it.as_ref())
-    }
-
-    /// Returns the last component of this path, or None if the path is empty.
-    pub fn last(&self) -> Option<&str> {
-        self.0.last().map(|it| it.as_ref())
-    }
-
-    /// Returns all but the last component of this path, or None if the path is empty.
-    pub fn parent(&self) -> Option<&S3Path<'_>> {
-        if self.0.is_empty() {
-            None
-        } else {
-            // Safety: S3Path is repr(transparent) over [Cow<'i, str>]
-            let parent_slice = &self.0[..self.0.len() - 1];
-            Some(unsafe { &*(parent_slice as *const [Cow<'static, str>] as *const S3Path<'_>) })
-        }
-    }
-
     /// Pop the last component from this path, returning true if a component was removed
     pub fn pop(&mut self) -> Option<Cow<'static, str>> {
         self.components.pop()
@@ -285,6 +235,13 @@ impl TryFrom<String> for S3PathBuf {
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         TryFrom::try_from(value.as_str())
+    }
+}
+
+#[cfg(test)]
+impl assertr::assertions::HasLength for S3PathBuf {
+    fn length(&self) -> usize {
+        self.len()
     }
 }
 
@@ -374,6 +331,76 @@ mod test {
             let cloned = path.to_owned();
             drop(path_buf);
             assert_that(cloned).has_display_value("foo/bar");
+        }
+
+        #[test] // Function `is_empty` inherited through deref to S3Path!
+        fn is_empty_returns_true_when_path_has_no_components() {
+            let path_buf = S3PathBuf::new();
+            assert_that(path_buf.is_empty()).is_true();
+        }
+
+        #[test] // Function `is_empty` inherited through deref to S3Path!
+        fn is_empty_returns_false_when_path_has_components() {
+            let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
+            assert_that(path_buf.is_empty()).is_false();
+        }
+
+        #[test] // Function `len` inherited through deref to S3Path!
+        fn len_returns_number_of_components() {
+            let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
+            assert_that(path_buf.len()).is_equal_to(2);
+        }
+
+        #[test] // Function `components` inherited through deref to S3Path!
+        fn components_iterates_over_all_components() {
+            let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
+            assert_that(path_buf.components()).contains_exactly(&["foo", "bar"]);
+        }
+
+        #[test] // Function `get` inherited through deref to S3Path!
+        fn get_returns_component_at_index() {
+            let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
+            assert_that(path_buf.get(1)).is_some().is_equal_to("bar");
+        }
+
+        #[test] // Function `last` inherited through deref to S3Path!
+        fn last_returns_last_component() {
+            let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
+            assert_that(path_buf.last()).is_some().is_equal_to("bar");
+        }
+
+        #[test] // Function `parent` inherited through deref to S3Path!
+        fn parent_returns_none_when_path_has_no_components() {
+            let path_buf = S3PathBuf::new();
+            assert_that(path_buf.parent()).is_none();
+        }
+
+        #[test] // Function `parent` inherited through deref to S3Path!
+        fn parent_returns_empty_component_when_path_has_only_one_component() {
+            let path_buf = S3PathBuf::try_from(["foo"]).unwrap();
+            assert_that(path_buf.parent())
+                .is_some()
+                .has_display_value("");
+        }
+
+        #[test] // Function `parent` inherited through deref to S3Path!
+        fn parent_returns_view_of_parent_path_when_path_has_multiple_components() {
+            let path_buf = S3PathBuf::try_from(["foo", "bar", "baz"]).unwrap();
+            assert_that(path_buf.parent())
+                .is_some()
+                .has_display_value("foo/bar");
+        }
+
+        #[test] // Function `to_std_path_buf` inherited through deref to S3Path!
+        fn to_std_path_buf_returns_empty_path_buf_when_s3_path_has_zero_components() {
+            let path_buf = S3PathBuf::new();
+            assert_that(path_buf.to_std_path_buf().display()).has_display_value("");
+        }
+
+        #[test] // Function `to_std_path_buf` inherited through deref to S3Path!
+        fn to_std_path_buf_joins_components_with_path_separator_does_not_add_slashes() {
+            let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
+            assert_that(path_buf.to_std_path_buf().display()).has_display_value("foo/bar");
         }
     }
 
