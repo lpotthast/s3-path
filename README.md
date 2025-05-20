@@ -21,12 +21,15 @@ fn owned() {
     path.join("bar").unwrap();
     assert_that(path).has_display_value("foo/bar");
 
-    let path = S3PathBuf::try_from(["foo", "bar"]).unwrap();
+    let path = S3PathBuf::try_from(["foo/bar", "baz"]).unwrap();
+    assert_that(path).has_display_value("foobar/baz");
+    
+    let path = S3PathBuf::try_from_str("foo/bar").unwrap();
     assert_that(path).has_display_value("foo/bar");
 }
 
 fn borrowed() {
-    let path = S3Path::try_from(["foo", "bar"]).unwrap();
+    let path = S3Path::new([Cow::Borrowed("foo"), Cow::Borrowed("bar")]).unwrap();
     assert_that(path).has_display_value("foo/bar");
 }
 ```

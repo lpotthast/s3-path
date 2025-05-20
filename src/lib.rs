@@ -4,73 +4,167 @@ mod validation;
 use crate::error::InvalidS3PathComponent;
 use std::borrow::Cow;
 use std::fmt::Formatter;
-use std::marker::PhantomData;
+use std::ops::Deref;
 use std::path::PathBuf;
 
-pub type BorrowedS3PathComp<'i> = Cow<'i, str>;
-pub type OwnedS3PathComp = Cow<'static, str>;
-
-pub trait S3PathIter<C>: IntoIterator<Item = C> + Clone {}
-
-impl<'i, C: Into<BorrowedS3PathComp<'i>>, II: IntoIterator<Item = C> + Clone> S3PathIter<C> for II {}
-
-/// A borrowed S3 storage path.
-#[derive(Clone)]
-pub struct S3Path<'i, C: Into<BorrowedS3PathComp<'i>>, I: S3PathIter<C>> {
-    components: I,
-    phantom_data: PhantomData<&'i ()>,
-    phantom_data2: PhantomData<C>,
+/// Macro to create an S3Path from string literals
+#[macro_export]
+macro_rules! s3_path {
+    ($($component:expr),*) => {{
+        let components = &[$(::std::borrow::Cow::Borrowed($component)),*];
+        S3Path::new(components)
+    }}
 }
 
-impl<'i, C: Into<BorrowedS3PathComp<'i>>, I: S3PathIter<C>> S3Path<'i, C, I> {
-    pub fn try_from(components: I) -> Result<Self, InvalidS3PathComponent> {
-        for component in components.clone().into_iter() {
-            validation::validate_component(&component.into())?;
-        }
-        Ok(Self {
-            components,
-            phantom_data: PhantomData,
-            phantom_data2: PhantomData,
-        })
-    }
-
-    fn new_unchecked(components: I) -> Self {
-        Self {
-            components,
-            phantom_data: PhantomData,
-            phantom_data2: PhantomData,
-        }
-    }
-
-    pub fn to_owned(self) -> S3PathBuf {
-        S3PathBuf {
-            components: self
-                .components
-                .into_iter()
-                .map(|it| Cow::Owned(it.into().to_string()))
-                .collect(),
-        }
-    }
-}
-
-impl<'i, C: Into<BorrowedS3PathComp<'i>>, I: S3PathIter<C>> std::fmt::Display for S3Path<'i, C, I> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write_components(self.components.clone().into_iter().map(|it| it.into()), f)?;
-        Ok(())
-    }
-}
-
-impl<'i, C: Into<BorrowedS3PathComp<'i>>, I: S3PathIter<C>> std::fmt::Debug for S3Path<'i, C, I> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write_components(self.components.clone().into_iter().map(|it| it.into()), f)?;
-        Ok(())
-    }
-}
+/// A borrowed, unsized S3 storage path.
+///
+// Must be repr(transparent) to safely convert from the slice.
+#[repr(transparent)]
+#[derive(PartialEq, Eq)]
+pub struct S3Path<'i>([Cow<'i, str>]);
 
 /// An owned S3 storage path.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct S3PathBuf {
-    components: Vec<OwnedS3PathComp>,
+    components: Vec<Cow<'static, str>>,
+}
+impl<'i> AsRef<S3Path<'i>> for S3Path<'i> {
+    fn as_ref(&self) -> &S3Path<'i> {
+        self
+    }
+}
+
+impl<'i> AsRef<S3Path<'i>> for S3PathBuf {
+    fn as_ref(&self) -> &S3Path<'i> {
+        self.deref()
+    }
+}
+
+impl AsRef<S3PathBuf> for S3PathBuf {
+    fn as_ref(&self) -> &S3PathBuf {
+        self
+    }
+}
+
+fn write_components<C: AsRef<str>>(
+    components: impl Iterator<Item = C>,
+    f: &mut Formatter,
+) -> Result<(), std::fmt::Error> {
+    for (i, c) in components.enumerate() {
+        if i > 0 {
+            f.write_str("/")?;
+        }
+        f.write_str(c.as_ref())?;
+    }
+    Ok(())
+}
+
+impl<'i> std::fmt::Display for S3Path<'i> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write_components(self.0.iter(), f)?;
+        Ok(())
+    }
+}
+
+impl<'i> std::fmt::Debug for S3Path<'i> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write_components(self.0.iter(), f)?;
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for S3PathBuf {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write_components(self.components.iter(), f)?;
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for S3PathBuf {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write_components(self.components.iter(), f)?;
+        Ok(())
+    }
+}
+
+impl<'i> S3Path<'i> {
+    /// Create a new S3Path from a slice.
+    pub fn new(components: &'i [Cow<'i, str>]) -> Result<&'i S3Path<'i>, InvalidS3PathComponent> {
+        for component in components {
+            validation::validate_component(component)?;
+        }
+        // Safety: S3Path is repr(transparent) over [Cow<'i, str>].
+        Ok(unsafe { &*(components as *const [Cow<'i, str>] as *const S3Path<'i>) })
+    }
+
+    pub fn to_owned(&'i self) -> S3PathBuf {
+        S3PathBuf {
+            components: self.0.iter().map(|it| Cow::Owned(it.to_string())).collect(),
+        }
+    }
+
+    /// Returns an iterator over the components of this path.
+    pub fn components(&'i self) -> impl Iterator<Item = &'i str> {
+        self.0.iter().map(move |it| it.as_ref())
+    }
+
+    /// Returns true if this path has no components.
+    pub fn is_empty(&'i self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns the number of components in this path.
+    pub fn len(&'i self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns the component at the given index, or None if the index is out of bounds.
+    pub fn get(&'i self, index: usize) -> Option<&'i str> {
+        self.0.get(index).map(|it| it.as_ref())
+    }
+
+    /// Returns the last component of this path, or None if the path is empty.
+    pub fn last(&'i self) -> Option<&'i str> {
+        self.0.last().map(|it| it.as_ref())
+    }
+
+    /// Returns all but the last component of this path, or None if the path is empty.
+    pub fn parent(&'i self) -> Option<&'i S3Path<'i>> {
+        if self.0.is_empty() {
+            None
+        } else {
+            // Safety: S3Path is repr(transparent) over [Cow<'i, str>]
+            let parent_slice = &self.0[..self.0.len() - 1];
+            Some(unsafe { &*(parent_slice as *const [Cow<'i, str>] as *const S3Path<'i>) })
+        }
+    }
+
+    /// Convert this S3 path to a `std::path::PathBuf`, allowing you to use this S3 path as a
+    /// system file path.
+    ///
+    /// Our strong guarantee that path components only consist of ascii alphanumeric characters,
+    /// '-', '_' and '.' and that no path traversal components ('.' and '..') are allowed, makes
+    /// this a safe operation.
+    pub fn to_std_path_buf(&self) -> PathBuf {
+        let mut path = PathBuf::new();
+        for c in &self.0 {
+            path = path.join(c.as_ref());
+        }
+        path
+    }
+}
+
+// Deref - NameBuf can be automatically converted to &Name<'static>
+impl Deref for S3PathBuf {
+    type Target = S3Path<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        // Safety: This is safe because Name is repr(transparent) over [Cow<'i, str>] and we
+        // store [Cow<'static>, str>], with 'static outliving any lifetime 'i.
+        unsafe {
+            &*(self.components.as_slice() as *const [Cow<'static, str>] as *const S3Path<'static>)
+        }
+    }
 }
 
 impl S3PathBuf {
@@ -78,11 +172,11 @@ impl S3PathBuf {
         Self::default()
     }
 
-    pub fn try_from<'i, C: Into<OwnedS3PathComp>, I: S3PathIter<C>>(
+    pub fn try_from<C: Into<Cow<'static, str>>, I: IntoIterator<Item = C>>(
         components: I,
     ) -> Result<Self, InvalidS3PathComponent> {
         let mut path = S3PathBuf::new();
-        for component in components.into_iter() {
+        for component in components {
             path.join(component)?;
         }
         Ok(path)
@@ -103,24 +197,71 @@ impl S3PathBuf {
         &mut self,
         component: impl Into<Cow<'static, str>>,
     ) -> Result<&mut Self, InvalidS3PathComponent> {
-        let component_str = component.into();
-        validation::validate_component(component_str.as_ref())?;
-        self.components.push(component_str);
+        let comp = component.into();
+        validation::validate_component(&comp)?;
+        self.components.push(comp);
         Ok(self)
     }
 
-    pub fn as_path(&self) -> S3Path<Cow<str>, impl S3PathIter<Cow<str>>> {
-        // SAFETY: We can use `new_unchecked` here,
-        // because components were already validated when added!
-        S3Path::new_unchecked(self.components.iter().map(|it| Cow::Borrowed(it.as_ref())))
+    #[must_use]
+    #[inline]
+    pub fn as_path(&self) -> &S3Path<'_> {
+        self.deref()
     }
 
+    /// Convert this S3 path to a `std::path::PathBuf`, allowing you to use this S3 path as a
+    /// system file path.
+    ///
+    /// Our strong guarantee that path components only consist of ascii alphanumeric characters,
+    /// '-', '_' and '.' and that no path traversal components ('.' and '..') are allowed, makes
+    /// this a safe operation.
     pub fn to_std_path_buf(&self) -> PathBuf {
         let mut path = PathBuf::new();
         for c in &self.components {
             path = path.join(c.as_ref());
         }
         path
+    }
+
+    /// Returns an iterator over the components of this path.
+    pub fn components(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(move |it| it.as_ref())
+    }
+
+    /// Returns true if this path has no components.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns the number of components in this path.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns the component at the given index, or None if the index is out of bounds.
+    pub fn get(&self, index: usize) -> Option<&str> {
+        self.0.get(index).map(|it| it.as_ref())
+    }
+
+    /// Returns the last component of this path, or None if the path is empty.
+    pub fn last(&self) -> Option<&str> {
+        self.0.last().map(|it| it.as_ref())
+    }
+
+    /// Returns all but the last component of this path, or None if the path is empty.
+    pub fn parent(&self) -> Option<&S3Path<'_>> {
+        if self.0.is_empty() {
+            None
+        } else {
+            // Safety: S3Path is repr(transparent) over [Cow<'i, str>]
+            let parent_slice = &self.0[..self.0.len() - 1];
+            Some(unsafe { &*(parent_slice as *const [Cow<'static, str>] as *const S3Path<'_>) })
+        }
+    }
+
+    /// Pop the last component from this path, returning true if a component was removed
+    pub fn pop(&mut self) -> Option<Cow<'static, str>> {
+        self.components.pop()
     }
 }
 
@@ -147,33 +288,6 @@ impl TryFrom<String> for S3PathBuf {
     }
 }
 
-impl std::fmt::Display for S3PathBuf {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write_components(self.components.iter(), f)?;
-        Ok(())
-    }
-}
-
-impl std::fmt::Debug for S3PathBuf {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write_components(self.components.iter(), f)?;
-        Ok(())
-    }
-}
-
-fn write_components<C: AsRef<str>>(
-    components: impl Iterator<Item = C>,
-    f: &mut Formatter,
-) -> Result<(), std::fmt::Error> {
-    for (i, c) in components.enumerate() {
-        if i > 0 {
-            f.write_str("/")?;
-        }
-        f.write_str(c.as_ref())?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod test {
     mod s3_path_buf {
@@ -195,6 +309,30 @@ mod test {
         }
 
         #[test]
+        fn try_from_str_parses_empty_string_as_empty_path() {
+            let path = S3PathBuf::try_from_str("").unwrap();
+            assert_that(path).has_display_value("");
+        }
+
+        #[test]
+        fn try_from_str_parses_single_slash_as_empty_path() {
+            let path = S3PathBuf::try_from_str("/").unwrap();
+            assert_that(path).has_display_value("");
+        }
+
+        #[test]
+        fn try_from_str_removes_leading_and_trailing_slashes() {
+            let path = S3PathBuf::try_from_str("/foo/bar/").unwrap();
+            assert_that(path).has_display_value("foo/bar");
+        }
+
+        #[test]
+        fn try_from_str_ignores_repeated_slashes() {
+            let path = S3PathBuf::try_from_str("foo/////bar").unwrap();
+            assert_that(path).has_display_value("foo/bar");
+        }
+
+        #[test]
         fn construct_using_try_from_given_str() {
             let path = S3PathBuf::try_from_str("foo/bar").unwrap();
             assert_that(path).has_display_value("foo/bar");
@@ -207,6 +345,18 @@ mod test {
         }
 
         #[test]
+        fn try_from_static_str_array() {
+            let path = S3PathBuf::try_from(["foo", "bar"]).unwrap();
+            assert_that(path).has_display_value("foo/bar");
+        }
+
+        #[test]
+        fn try_from_string_array() {
+            let path = S3PathBuf::try_from(["foo".to_string(), "bar".to_string()]).unwrap();
+            assert_that(path).has_display_value("foo/bar");
+        }
+
+        #[test]
         fn reject_invalid_characters() {
             let mut path = S3PathBuf::new();
             let result = path.join("invalid/path");
@@ -215,58 +365,109 @@ mod test {
             let result = S3PathBuf::try_from_str("foo/bar$baz");
             assert_that(result.is_err()).is_true();
         }
+
+        #[test]
+        fn as_path() {
+            let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
+            let path = path_buf.as_path();
+            assert_that(path).has_display_value("foo/bar");
+            let cloned = path.to_owned();
+            drop(path_buf);
+            assert_that(cloned).has_display_value("foo/bar");
+        }
     }
 
     mod s3_path {
+        use crate::S3Path;
+        use assertr::prelude::*;
+        use std::borrow::Cow;
 
-        mod new {
-            use crate::S3Path;
-            use assertr::prelude::*;
+        #[test]
+        fn macro_handles_zero_components() {
+            let path = s3_path!().unwrap();
+            assert_that(path).has_display_value("");
+        }
 
-            #[test]
-            fn from_static_str_array() {
-                let path = S3Path::try_from(["foo", "bar"]).unwrap();
-                assert_that(path).has_display_value("foo/bar");
-            }
+        #[test]
+        fn macro_handles_one_component() {
+            let path = s3_path!("foo").unwrap();
+            assert_that(path).has_display_value("foo");
+        }
 
-            #[test]
-            fn from_borrowed_str_array() {
-                let components = ["foo".to_string(), "bar".to_string()];
-                let components_ref = [components[0].as_str(), components[1].as_str()];
-                let path = S3Path::try_from(components_ref).unwrap();
-                assert_that(path).has_display_value("foo/bar");
-            }
+        #[test]
+        fn macro_handles_multiple_components() {
+            let path = s3_path!("foo", "bar").unwrap();
+            assert_that(path).has_display_value("foo/bar");
+        }
 
-            #[test]
-            fn from_string_array() {
-                let path = S3Path::try_from(["foo".to_string(), "bar".to_string()]).unwrap();
-                assert_that(path).has_display_value("foo/bar");
-            }
+        #[test]
+        fn new_is_initially_empty() {
+            let path = S3Path::new(&[]).unwrap();
+            assert_that(path).has_display_value("");
+        }
 
-            #[test]
-            fn reject_invalid_characters() {
-                assert_that(S3Path::try_from(["foo-bar"]))
-                    .is_ok()
-                    .has_display_value("foo-bar");
-                assert_that(S3Path::try_from(["foo_bar"]))
-                    .is_ok()
-                    .has_display_value("foo_bar");
-                assert_that(S3Path::try_from(["foo.bar"]))
-                    .is_ok()
-                    .has_display_value("foo.bar");
-                assert_that(S3Path::try_from([".test"]))
-                    .is_ok()
-                    .has_display_value(".test");
+        #[test]
+        fn construct_using_new_and_join_components() {
+            let path = S3Path::new(&[Cow::Borrowed("foo"), Cow::Borrowed("bar")]).unwrap();
+            assert_that(path).has_display_value("foo/bar");
+        }
+    }
 
-                assert_that(S3Path::try_from(["foo$bar"])).is_err();
-                assert_that(S3Path::try_from(["foo&bar"])).is_err();
-                assert_that(S3Path::try_from(["foo#bar"])).is_err();
-                assert_that(S3Path::try_from(["foo/bar"])).is_err();
-                assert_that(S3Path::try_from(["foo|bar"])).is_err();
-                assert_that(S3Path::try_from(["foo\\bar"])).is_err();
-                assert_that(S3Path::try_from(["."])).is_err();
-                assert_that(S3Path::try_from([".."])).is_err();
-            }
+    mod validation {
+        use crate::S3PathBuf;
+        use assertr::prelude::*;
+
+        #[test]
+        fn reject_invalid_characters() {
+            assert_that(S3PathBuf::try_from(["foo-bar"]))
+                .is_ok()
+                .has_display_value("foo-bar");
+            assert_that(S3PathBuf::try_from(["foo_bar"]))
+                .is_ok()
+                .has_display_value("foo_bar");
+            assert_that(S3PathBuf::try_from(["foo.bar"]))
+                .is_ok()
+                .has_display_value("foo.bar");
+            assert_that(S3PathBuf::try_from([".test"]))
+                .is_ok()
+                .has_display_value(".test");
+            assert_that(S3PathBuf::try_from(["..test"]))
+                .is_ok()
+                .has_display_value("..test");
+
+            assert_that(S3PathBuf::try_from(["foo:bar"])).is_err();
+            assert_that(S3PathBuf::try_from(["foo;bar"])).is_err();
+            assert_that(S3PathBuf::try_from(["foo$bar"])).is_err();
+            assert_that(S3PathBuf::try_from(["foo&bar"])).is_err();
+            assert_that(S3PathBuf::try_from(["foo#bar"])).is_err();
+            assert_that(S3PathBuf::try_from(["foo/bar"])).is_err();
+            assert_that(S3PathBuf::try_from(["foo|bar"])).is_err();
+            assert_that(S3PathBuf::try_from(["foo\\bar"])).is_err();
+            assert_that(S3PathBuf::try_from(["."])).is_err();
+            assert_that(S3PathBuf::try_from([".."])).is_err();
+        }
+    }
+
+    mod take_any_path {
+        use crate::{S3Path, S3PathBuf};
+
+        fn take_any_path<'p>(path: impl AsRef<S3Path<'p>>) {
+            let _path: &S3Path<'p> = path.as_ref();
+        }
+
+        #[test]
+        fn takes_owned_s3_path_buf() {
+            take_any_path(S3PathBuf::new());
+        }
+
+        #[test]
+        fn takes_borrowed_s3_path_buf() {
+            take_any_path(&S3PathBuf::new());
+        }
+
+        #[test]
+        fn takes_s3_path() {
+            take_any_path(S3Path::new(&[]).unwrap());
         }
     }
 }
