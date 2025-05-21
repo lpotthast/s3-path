@@ -22,7 +22,7 @@ macro_rules! s3_path {
     }}
 }
 
-/// Var-arg macro to create an S3Path from individual components.
+/// Var-arg macro to create an `S3Path` from individual components.
 ///
 /// ```
 /// use std::borrow::Cow;
@@ -36,7 +36,7 @@ macro_rules! s3_path {
 /// - an owned `String`
 /// - or a `Cow<'static, str>`
 ///
-/// str-slices of arbitrary lifetime cannot be used, as an S3PathBuf requires ownership,
+/// str-slices of arbitrary lifetime cannot be used, as an `S3PathBuf` requires ownership,
 /// and this API enforces that any allocation, if needed, is performed at call-site.
 #[macro_export]
 macro_rules! s3_path_buf {
@@ -73,43 +73,43 @@ pub struct S3PathBuf {
     components: Vec<Cow<'static, str>>,
 }
 
-/// Allow comparisons between S3Path and S3PathBuf.
+/// Allow comparisons between `S3Path` and `S3PathBuf`.
 impl PartialEq<S3Path<'_>> for S3PathBuf {
     fn eq(&self, other: &S3Path<'_>) -> bool {
         self.as_path() == other
     }
 }
 
-/// Allow comparisons between S3Path and S3PathBuf.
+/// Allow comparisons between `S3Path` and `S3PathBuf`.
 impl<'i> PartialEq<&S3Path<'i>> for S3PathBuf {
     fn eq(&self, other: &&S3Path<'i>) -> bool {
         self.as_path() == *other
     }
 }
 
-/// Allow comparisons between S3Path and S3PathBuf.
+/// Allow comparisons between `S3Path` and `S3PathBuf`.
 impl<'i> PartialEq<&&S3Path<'i>> for S3PathBuf {
     fn eq(&self, other: &&&S3Path<'i>) -> bool {
         self.as_path() == **other
     }
 }
 
-/// Allow comparisons between S3Path and S3PathBuf.
-impl<'i> PartialEq<S3PathBuf> for S3Path<'i> {
+/// Allow comparisons between `S3Path` and `S3PathBuf`.
+impl PartialEq<S3PathBuf> for S3Path<'_> {
     fn eq(&self, other: &S3PathBuf) -> bool {
         self == other.as_path()
     }
 }
 
-/// Allow comparisons between S3Path and S3PathBuf.
-impl<'i> PartialEq<S3PathBuf> for &S3Path<'i> {
+/// Allow comparisons between `S3Path` and `S3PathBuf`.
+impl PartialEq<S3PathBuf> for &S3Path<'_> {
     fn eq(&self, other: &S3PathBuf) -> bool {
         *self == other.as_path()
     }
 }
 
-/// Allow comparisons between S3Path and S3PathBuf.
-impl<'i> PartialEq<S3PathBuf> for &&S3Path<'i> {
+/// Allow comparisons between `S3Path` and `S3PathBuf`.
+impl PartialEq<S3PathBuf> for &&S3Path<'_> {
     fn eq(&self, other: &S3PathBuf) -> bool {
         **self == other.as_path()
     }
@@ -429,7 +429,7 @@ mod test {
 
         #[test]
         fn construct_using_try_from_given_string() {
-            let path = S3PathBuf::try_from_str("foo/bar".to_string()).unwrap();
+            let path = S3PathBuf::try_from_str(String::from("foo/bar")).unwrap();
             assert_that(path).has_display_value("foo/bar");
         }
 
@@ -486,7 +486,7 @@ mod test {
         #[test] // Function `components` inherited through deref to S3Path!
         fn components_iterates_over_all_components() {
             let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
-            assert_that(path_buf.components()).contains_exactly(&["foo", "bar"]);
+            assert_that(path_buf.components()).contains_exactly(["foo", "bar"]);
         }
 
         #[test] // Function `get` inherited through deref to S3Path!
@@ -692,6 +692,7 @@ mod test {
     }
 
     #[test]
+    #[allow(clippy::op_ref)]
     fn comparison_between_types() {
         let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
         let path = path_buf.as_path();
