@@ -16,7 +16,7 @@ use std::path::PathBuf;
 /// ```
 #[macro_export]
 macro_rules! s3_path {
-    ($($component:expr),*) => {{
+    ($($component:expr),* $(,)?) => {{
         let components = &[$(::std::borrow::Cow::Borrowed($component)),*];
         $crate::S3Path::new(components)
     }}
@@ -40,7 +40,7 @@ macro_rules! s3_path {
 /// and this API enforces that any allocation, if needed, is performed at call-site.
 #[macro_export]
 macro_rules! s3_path_buf {
-    ($($component:expr),*) => {{
+    ($($component:expr),* $(,)?) => {{
         #[allow(unused_mut)] // In case zero components are passed in.
         let mut path = $crate::S3PathBuf::new();
         #[allow(unused_mut)] // In case zero components are passed in.
@@ -507,6 +507,12 @@ mod test {
                 let path = s3_path_buf!(foo, "bar", Cow::Borrowed("baz")).unwrap();
                 assert_that(path).has_display_value("foo/bar/baz");
             }
+
+            #[test]
+            fn allows_a_trailing_comma() {
+                let path = s3_path_buf!("foo",).unwrap();
+                assert_that(path).has_display_value("foo");
+            }
         }
     }
 
@@ -560,6 +566,12 @@ mod test {
             fn handles_multiple_components() {
                 let path = s3_path!("foo", "bar").unwrap();
                 assert_that(path).has_display_value("foo/bar");
+            }
+
+            #[test]
+            fn allows_a_trailing_comma() {
+                let path = s3_path!("foo",).unwrap();
+                assert_that(path).has_display_value("foo");
             }
         }
     }
