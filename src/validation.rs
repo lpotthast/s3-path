@@ -14,7 +14,7 @@ pub(crate) fn validate_component(component: &str) -> Result<(), InvalidS3PathCom
         if !c.is_ascii_alphanumeric() && c != '-' && c != '_' && c != '.' {
             return Err(InvalidS3PathComponent {
                 component: component.to_string(),
-                reason: format!("Character '{}' is not allowed", c),
+                reason: format!("Character '{c}' is not allowed"),
             });
         }
     }

@@ -7,7 +7,7 @@ use std::fmt::Formatter;
 use std::ops::Deref;
 use std::path::PathBuf;
 
-/// Var-arg macro to create an S3Path, borrowing from the given string literals.
+/// Var-arg macro to create an `S3Path`, borrowing from the given string literals.
 ///
 /// ```
 /// use s3_path::s3_path;
@@ -123,7 +123,7 @@ impl<'i> AsRef<S3Path<'i>> for S3Path<'i> {
 
 impl<'i> AsRef<S3Path<'i>> for S3PathBuf {
     fn as_ref(&self) -> &S3Path<'i> {
-        self.deref()
+        self
     }
 }
 
@@ -146,14 +146,14 @@ fn write_components<C: AsRef<str>>(
     Ok(())
 }
 
-impl<'i> std::fmt::Display for S3Path<'i> {
+impl std::fmt::Display for S3Path<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write_components(self.0.iter(), f)?;
         Ok(())
     }
 }
 
-impl<'i> std::fmt::Debug for S3Path<'i> {
+impl std::fmt::Debug for S3Path<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write_components(self.0.iter(), f)?;
         Ok(())
@@ -175,23 +175,38 @@ impl std::fmt::Debug for S3PathBuf {
 }
 
 impl<'i> S3Path<'i> {
-    /// Create a new S3Path from a slice.
+    /// Create a new `S3Path` from a slice of static `components`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when any given `component`
+    /// - is empty
+    /// - contains characters other than: ascii alphanumeric characters, '-', '_' and '.'
+    /// - is equal to `.` or `..`
     pub fn new(components: &'i [Cow<'i, str>]) -> Result<&'i S3Path<'i>, InvalidS3PathComponent> {
         for component in components {
             validation::validate_component(component)?;
         }
         // Safety: S3Path is repr(transparent) over [Cow<'i, str>].
-        Ok(unsafe { &*(components as *const [Cow<'i, str>] as *const S3Path<'i>) })
+        Ok(unsafe { &*(std::ptr::from_ref::<[Cow<'i, str>]>(components) as *const S3Path<'i>) })
     }
 
-    /// Converts to an owned S3PathBuf.
+    /// Converts to an owned `S3PathBuf`.
+    #[must_use]
     pub fn to_owned(&'i self) -> S3PathBuf {
         S3PathBuf {
             components: self.0.iter().map(|it| Cow::Owned(it.to_string())).collect(),
         }
     }
 
-    /// Converts to an owned S3PathBuf and tries to append `component`.
+    /// Converts to an owned `S3PathBuf` and appends `component` to it after validating it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the given `component`
+    /// - is empty
+    /// - contains characters other than: ascii alphanumeric characters, '-', '_' and '.'
+    /// - is equal to `.` or `..`
     pub fn join<C: Into<Cow<'static, str>>>(
         &self,
         component: C,
@@ -202,31 +217,34 @@ impl<'i> S3Path<'i> {
     }
 
     /// Returns true if this path has no components.
+    #[must_use]
     pub fn is_empty(&'i self) -> bool {
         self.0.is_empty()
     }
 
     /// Returns the number of components in this path.
+    #[must_use]
     pub fn len(&'i self) -> usize {
         self.0.len()
     }
 
     /// Returns an iterator over the components of this path.
     pub fn components(&'i self) -> impl Iterator<Item = &'i str> {
-        self.0.iter().map(move |it| it.as_ref())
+        self.0.iter().map(std::convert::AsRef::as_ref)
     }
 
     /// Returns the component at the given index, or None if the index is out of bounds.
     pub fn get(&'i self, index: usize) -> Option<&'i str> {
-        self.0.get(index).map(|it| it.as_ref())
+        self.0.get(index).map(std::convert::AsRef::as_ref)
     }
 
     /// Returns the last component of this path, or None if the path is empty.
     pub fn last(&'i self) -> Option<&'i str> {
-        self.0.last().map(|it| it.as_ref())
+        self.0.last().map(std::convert::AsRef::as_ref)
     }
 
     /// Returns all but the last component of this path, or None if the path is empty.
+    #[must_use]
     pub fn parent(&'i self) -> Option<&'i S3Path<'i>> {
         if self.0.is_empty() {
             None
@@ -234,7 +252,9 @@ impl<'i> S3Path<'i> {
             let parent_slice = &self.0[..self.0.len() - 1];
             Some(
                 // Safety: S3Path is repr(transparent) over [Cow<'i, str>]
-                unsafe { &*(parent_slice as *const [Cow<'i, str>] as *const S3Path<'i>) },
+                unsafe {
+                    &*(std::ptr::from_ref::<[Cow<'i, str>]>(parent_slice) as *const S3Path<'i>)
+                },
             )
         }
     }
@@ -245,6 +265,7 @@ impl<'i> S3Path<'i> {
     /// Our strong guarantee that path components only consist of ascii alphanumeric characters,
     /// '-', '_' and '.' and that no path traversal components ('.' and '..') are allowed, makes
     /// this a safe operation.
+    #[must_use]
     pub fn to_std_path_buf(&self) -> PathBuf {
         let mut path = PathBuf::new();
         for c in &self.0 {
@@ -262,16 +283,29 @@ impl Deref for S3PathBuf {
         // Safety: This is safe because Name is repr(transparent) over [Cow<'i, str>] and we
         // store [Cow<'static>, str>], with 'static outliving any lifetime 'i.
         unsafe {
-            &*(self.components.as_slice() as *const [Cow<'static, str>] as *const S3Path<'static>)
+            &*(std::ptr::from_ref::<[Cow<'static, str>]>(self.components.as_slice())
+                as *const S3Path<'static>)
         }
     }
 }
 
 impl S3PathBuf {
+    /// Creates an empty S3 path. Call `join` to extend it with additional path segments.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Validates and adds all `components` to the returned `S3PathBuf`.
+    ///
+    /// NO component is parsed for slashes ('/') to be split up further!
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when any given component
+    /// - is empty
+    /// - contains characters other than: ascii alphanumeric characters, '-', '_' and '.'
+    /// - is equal to `.` or `..`
     pub fn try_from<C: Into<Cow<'static, str>>, I: IntoIterator<Item = C>>(
         components: I,
     ) -> Result<Self, InvalidS3PathComponent> {
@@ -282,6 +316,16 @@ impl S3PathBuf {
         Ok(path)
     }
 
+    /// Splits `string` at each occurrence of a `/`, then validates and add all components to the
+    /// returned `S3PathBuf`.
+    ///
+    /// Multiple consecutive slashes, as in "foo//bar", are treated as one.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when any component read
+    /// - contains characters other than: ascii alphanumeric characters, '-', '_' and '.'
+    /// - is equal to `.` or `..`
     pub fn try_from_str(string: impl AsRef<str>) -> Result<Self, InvalidS3PathComponent> {
         let mut path = S3PathBuf::new();
         for c in string.as_ref().split('/') {
@@ -293,6 +337,14 @@ impl S3PathBuf {
         Ok(path)
     }
 
+    /// Adds `component` to the path after validating it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the given component
+    /// - is empty
+    /// - contains characters other than: ascii alphanumeric characters, '-', '_' and '.'
+    /// - is equal to `.` or `..`
     pub fn join(
         &mut self,
         component: impl Into<Cow<'static, str>>,
@@ -306,35 +358,12 @@ impl S3PathBuf {
     #[must_use]
     #[inline]
     pub fn as_path(&self) -> &S3Path<'_> {
-        self.deref()
+        self
     }
 
     /// Pop the last component from this path, returning true if a component was removed
     pub fn pop(&mut self) -> Option<Cow<'static, str>> {
         self.components.pop()
-    }
-}
-
-impl TryFrom<&str> for S3PathBuf {
-    type Error = InvalidS3PathComponent;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let mut path = S3PathBuf::new();
-        for c in value.split('/') {
-            // Skip empty components from consecutive slashes
-            if !c.is_empty() {
-                path.join(Cow::Owned(c.to_string()))?;
-            }
-        }
-        Ok(path)
-    }
-}
-
-impl TryFrom<String> for S3PathBuf {
-    type Error = InvalidS3PathComponent;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        TryFrom::try_from(value.as_str())
     }
 }
 
