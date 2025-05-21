@@ -7,12 +7,56 @@ use std::fmt::Formatter;
 use std::ops::Deref;
 use std::path::PathBuf;
 
-/// Macro to create an S3Path from string literals
+/// Var-arg macro to create an S3Path, borrowing from the given string literals.
+///
+/// ```
+/// use s3_path::s3_path;
+///
+/// let path = s3_path!("foo", "bar").unwrap();
+/// ```
 #[macro_export]
 macro_rules! s3_path {
     ($($component:expr),*) => {{
         let components = &[$(::std::borrow::Cow::Borrowed($component)),*];
-        S3Path::new(components)
+        $crate::S3Path::new(components)
+    }}
+}
+
+/// Var-arg macro to create an S3Path from individual components.
+///
+/// ```
+/// use std::borrow::Cow;
+/// use s3_path::s3_path_buf;
+///
+/// let path = s3_path_buf!("foo", String::from("bar"), Cow::Borrowed("baz")).unwrap();
+/// ```
+///
+/// Every component passed into this macro must either
+/// - be a `&'static str`
+/// - an owned `String`
+/// - or a `Cow<'static, str>`
+///
+/// str-slices of arbitrary lifetime cannot be used, as an S3PathBuf requires ownership,
+/// and this API enforces that any allocation, if needed, is performed at call-site.
+#[macro_export]
+macro_rules! s3_path_buf {
+    ($($component:expr),*) => {{
+        #[allow(unused_mut)] // In case zero components are passed in.
+        let mut path = $crate::S3PathBuf::new();
+        #[allow(unused_mut)] // In case zero components are passed in.
+        let mut error = None;
+        $(
+            if error.is_none() {
+                match path.join($component) {
+                    Ok(_) => {},
+                    Err(e) => error = Some(e),
+                }
+            }
+        )*
+        match error {
+            Some(err) => Result::<$crate::S3PathBuf, $crate::error::InvalidS3PathComponent>::Err(err),
+            None => Result::<$crate::S3PathBuf, $crate::error::InvalidS3PathComponent>::Ok(path),
+        }
     }}
 }
 
@@ -433,30 +477,43 @@ mod test {
             let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
             assert_that(path_buf.to_std_path_buf().display()).has_display_value("foo/bar");
         }
+
+        mod s3_path_buf_macro {
+            use assertr::prelude::*;
+            use std::borrow::Cow;
+
+            #[test]
+            fn taking_nothing() {
+                let path = s3_path_buf!().unwrap();
+                assert_that(path).has_display_value("");
+            }
+
+            #[test]
+            fn taking_single_static_str() {
+                let path = s3_path_buf!("foo").unwrap();
+                assert_that(path).has_display_value("foo");
+            }
+
+            #[test]
+            fn taking_owned_string_and_static_str() {
+                let foo = String::from("foo");
+                let path = s3_path_buf!(foo, "bar").unwrap();
+                assert_that(path).has_display_value("foo/bar");
+            }
+
+            #[test]
+            fn taking_owned_string_and_static_str_and_cow() {
+                let foo = String::from("foo");
+                let path = s3_path_buf!(foo, "bar", Cow::Borrowed("baz")).unwrap();
+                assert_that(path).has_display_value("foo/bar/baz");
+            }
+        }
     }
 
     mod s3_path {
         use crate::S3Path;
         use assertr::prelude::*;
         use std::borrow::Cow;
-
-        #[test]
-        fn macro_handles_zero_components() {
-            let path = s3_path!().unwrap();
-            assert_that(path).has_display_value("");
-        }
-
-        #[test]
-        fn macro_handles_one_component() {
-            let path = s3_path!("foo").unwrap();
-            assert_that(path).has_display_value("foo");
-        }
-
-        #[test]
-        fn macro_handles_multiple_components() {
-            let path = s3_path!("foo", "bar").unwrap();
-            assert_that(path).has_display_value("foo/bar");
-        }
 
         #[test]
         fn new_is_initially_empty() {
@@ -482,6 +539,28 @@ mod test {
             let path = s3_path!("foo", "bar").unwrap();
             let path_owned = path.join("baz").unwrap();
             assert_that(path_owned).has_display_value("foo/bar/baz");
+        }
+
+        mod s3_path_macro {
+            use assertr::prelude::*;
+
+            #[test]
+            fn handles_zero_components() {
+                let path = s3_path!().unwrap();
+                assert_that(path).has_display_value("");
+            }
+
+            #[test]
+            fn handles_one_component() {
+                let path = s3_path!("foo").unwrap();
+                assert_that(path).has_display_value("foo");
+            }
+
+            #[test]
+            fn handles_multiple_components() {
+                let path = s3_path!("foo", "bar").unwrap();
+                assert_that(path).has_display_value("foo/bar");
+            }
         }
     }
 
