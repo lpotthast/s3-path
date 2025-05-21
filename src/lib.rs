@@ -73,17 +73,45 @@ pub struct S3PathBuf {
     components: Vec<Cow<'static, str>>,
 }
 
-// Allow comparisons between S3Path and S3PathBuf.
+/// Allow comparisons between S3Path and S3PathBuf.
+impl PartialEq<S3Path<'_>> for S3PathBuf {
+    fn eq(&self, other: &S3Path<'_>) -> bool {
+        self.as_path() == other
+    }
+}
+
+/// Allow comparisons between S3Path and S3PathBuf.
 impl<'i> PartialEq<&S3Path<'i>> for S3PathBuf {
     fn eq(&self, other: &&S3Path<'i>) -> bool {
         self.as_path() == *other
     }
 }
 
-// Allow comparisons between S3Path and S3PathBuf.
+/// Allow comparisons between S3Path and S3PathBuf.
+impl<'i> PartialEq<&&S3Path<'i>> for S3PathBuf {
+    fn eq(&self, other: &&&S3Path<'i>) -> bool {
+        self.as_path() == **other
+    }
+}
+
+/// Allow comparisons between S3Path and S3PathBuf.
+impl<'i> PartialEq<S3PathBuf> for S3Path<'i> {
+    fn eq(&self, other: &S3PathBuf) -> bool {
+        self == other.as_path()
+    }
+}
+
+/// Allow comparisons between S3Path and S3PathBuf.
 impl<'i> PartialEq<S3PathBuf> for &S3Path<'i> {
     fn eq(&self, other: &S3PathBuf) -> bool {
         *self == other.as_path()
+    }
+}
+
+/// Allow comparisons between S3Path and S3PathBuf.
+impl<'i> PartialEq<S3PathBuf> for &&S3Path<'i> {
+    fn eq(&self, other: &S3PathBuf) -> bool {
+        **self == other.as_path()
     }
 }
 
@@ -639,7 +667,23 @@ mod test {
         let path_buf = S3PathBuf::try_from(["foo", "bar"]).unwrap();
         let path = path_buf.as_path();
 
+        assert_that(path == path).is_true();
+        assert_that(path_buf == path_buf).is_true();
+
         assert_that(path == path_buf).is_true();
+        assert_that(path == &path_buf).is_true();
+        assert_that(&path == path_buf).is_true();
+        assert_that(&path == &path_buf).is_true();
+
         assert_that(path_buf == path).is_true();
+        assert_that(path_buf == &path).is_true();
+        assert_that(&path_buf == path).is_true();
+        assert_that(&path_buf == &path).is_true();
+
+        // Also works with assertr.
+        assert_that(&path_buf).is_equal_to(path);
+        assert_that(s3_path_buf!("foo", "bar"))
+            .is_ok()
+            .is_equal_to(path);
     }
 }
