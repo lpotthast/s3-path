@@ -47,7 +47,7 @@ macro_rules! s3_path_buf {
         let mut error = None;
         $(
             if error.is_none() {
-                match path.join($component) {
+                match path.push($component) {
                     Ok(_) => {},
                     Err(e) => error = Some(e),
                 }
@@ -212,7 +212,7 @@ impl<'i> S3Path<'i> {
         component: C,
     ) -> Result<S3PathBuf, InvalidS3PathComponent> {
         let mut path = self.to_owned();
-        path.join(component)?;
+        path.push(component)?;
         Ok(path)
     }
 
@@ -269,7 +269,7 @@ impl<'i> S3Path<'i> {
     pub fn to_std_path_buf(&self) -> PathBuf {
         let mut path = PathBuf::new();
         for c in &self.0 {
-            path = path.join(c.as_ref());
+            path.push(c.as_ref());
         }
         path
     }
@@ -290,7 +290,7 @@ impl Deref for S3PathBuf {
 }
 
 impl S3PathBuf {
-    /// Creates an empty S3 path. Call `join` to extend it with additional path segments.
+    /// Creates an empty S3 path. Call `join` or `push` to extend it with additional path segments.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -311,7 +311,7 @@ impl S3PathBuf {
     ) -> Result<Self, InvalidS3PathComponent> {
         let mut path = S3PathBuf::new();
         for component in components {
-            path.join(component)?;
+            path.push(component)?;
         }
         Ok(path)
     }
@@ -331,7 +331,7 @@ impl S3PathBuf {
         for c in string.as_ref().split('/') {
             // Skip empty components from consecutive slashes
             if !c.is_empty() {
-                path.join(Cow::Owned(c.to_string()))?;
+                path.push(Cow::Owned(c.to_string()))?;
             }
         }
         Ok(path)
@@ -345,7 +345,7 @@ impl S3PathBuf {
     /// - is empty
     /// - contains characters other than: ascii alphanumeric characters, '-', '_' and '.'
     /// - is equal to `.` or `..`
-    pub fn join(
+    pub fn push(
         &mut self,
         component: impl Into<Cow<'static, str>>,
     ) -> Result<&mut Self, InvalidS3PathComponent> {
@@ -353,6 +353,16 @@ impl S3PathBuf {
         validation::validate_component(&comp)?;
         self.components.push(comp);
         Ok(self)
+    }
+
+    /// Extend this path with a new segment in a new object.
+    pub fn join(
+        &self,
+        component: impl Into<Cow<'static, str>>,
+    ) -> Result<Self, InvalidS3PathComponent> {
+        let mut clone = self.clone();
+        clone.push(component)?;
+        Ok(clone)
     }
 
     #[must_use]
@@ -390,10 +400,10 @@ mod test {
         }
 
         #[test]
-        fn construct_using_new_and_join_components() {
+        fn construct_using_new_and_push_components() {
             let mut path = S3PathBuf::new();
-            path.join("foo").unwrap();
-            path.join("bar").unwrap();
+            path.push("foo").unwrap();
+            path.push("bar").unwrap();
             assert_that(path).has_display_value("foo/bar");
         }
 
@@ -448,11 +458,29 @@ mod test {
         #[test]
         fn reject_invalid_characters() {
             let mut path = S3PathBuf::new();
-            let result = path.join("invalid/path");
-            assert_that(result.is_err()).is_true();
+            let result = path.push("invalid/path");
+            assert_that(result).is_err();
 
             let result = S3PathBuf::try_from_str("foo/bar$baz");
-            assert_that(result.is_err()).is_true();
+            assert_that(result).is_err();
+        }
+
+        #[test]
+        fn push_mutates_original() {
+            let mut foo = S3PathBuf::try_from_str("foo").unwrap();
+            let foo_bar = foo.push("bar").unwrap();
+
+            assert_that(foo_bar).has_display_value("foo/bar");
+            assert_that(foo).has_display_value("foo/bar");
+        }
+
+        #[test]
+        fn join_creates_clone() {
+            let foo = S3PathBuf::try_from_str("foo").unwrap();
+            let foo_bar = foo.join("bar").unwrap();
+
+            assert_that(foo).has_display_value("foo");
+            assert_that(foo_bar).has_display_value("foo/bar");
         }
 
         #[test]
@@ -585,7 +613,7 @@ mod test {
         }
 
         #[test]
-        fn construct_using_new_and_join_components() {
+        fn construct_using_new() {
             let path = S3Path::new(&[Cow::Borrowed("foo"), Cow::Borrowed("bar")]).unwrap();
             assert_that(path).has_display_value("foo/bar");
         }
