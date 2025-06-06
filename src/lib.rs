@@ -337,6 +337,43 @@ impl S3PathBuf {
         Ok(path)
     }
 
+    /// Extend the last component of the path, if there is one, with [addition].
+    ///
+    /// If this path is empty, pushes [addition] the initial path component instead.
+    ///
+    /// ```
+    /// use s3_path::S3PathBuf;
+    /// let mut file = S3PathBuf::try_from_str("my/file").unwrap();
+    /// file.extend(".txt").unwrap();
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the given component
+    /// - is empty
+    /// - contains characters other than: ascii alphanumeric characters, '-', '_' and '.'
+    /// - is equal to `.` or `..`
+    pub fn extend(
+        &mut self,
+        addition: impl Into<Cow<'static, str>>,
+    ) -> Result<&mut Self, InvalidS3PathComponent> {
+        let addition = addition.into();
+
+        match self.components.pop() {
+            Some(last) => {
+                let combined = format!("{}{}", last, addition);
+                validation::validate_component(&combined)?;
+                self.components.push(Cow::Owned(combined))
+            }
+            None => {
+                validation::validate_component(&addition)?;
+                self.components.push(addition)
+            }
+        }
+
+        Ok(self)
+    }
+
     /// Adds `component` to the path after validating it.
     ///
     /// # Errors
@@ -355,7 +392,9 @@ impl S3PathBuf {
         Ok(self)
     }
 
-    /// Extend this path with a new segment in a new object.
+    /// Clones this path and pushes [component] onto it.
+    ///
+    /// Leaves this path untouched. Great for quickly creating multiple paths having the same root.
     pub fn join(
         &self,
         component: impl Into<Cow<'static, str>>,
@@ -463,6 +502,14 @@ mod test {
 
             let result = S3PathBuf::try_from_str("foo/bar$baz");
             assert_that(result).is_err();
+        }
+
+        #[test]
+        fn extend_mutates_original() {
+            let mut foo = S3PathBuf::try_from_str("foo").unwrap();
+            foo.extend(".txt").unwrap();
+
+            assert_that(foo).has_display_value("foo.txt");
         }
 
         #[test]
