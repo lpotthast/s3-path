@@ -31,11 +31,17 @@ fn create_an_owned_path() {
     let path = S3PathBuf::try_from_str("foo/bar").unwrap();
     assert_that(path).has_display_value("foo/bar");
 
-    // From manual calls to `join`.
+    // From individual components `push`ed to the path.
     let mut path = S3PathBuf::new();
-    path.join("foo").unwrap();
-    path.join("bar").unwrap();
+    path.push("foo").unwrap();
+    path.push("bar").unwrap();
     assert_that(path).has_display_value("foo/bar");
+    
+    // Joining components, creating clones.
+    let foo = S3PathBuf::try_from_str("foo").unwrap();
+    let foo_bar = foo.join("bar").unwrap();
+    assert_that(foo).has_display_value("foo");
+    assert_that(foo_bar).has_display_value("foo/bar");
 }
 
 fn create_a_borrowed_path() {
